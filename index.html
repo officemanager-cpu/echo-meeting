@@ -824,6 +824,26 @@
     color: var(--text-dim);
   }
   .word-menu-item:hover { background: var(--surface2); color: var(--text); }
+
+  /* Saved recording cards */
+  .saved-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 10px 12px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    transition: all 0.15s;
+    animation: fadeSlideIn 0.2s ease forwards;
+    opacity: 0;
+  }
+  .saved-card:hover { border-color: var(--accent2); background: rgba(122,196,232,0.05); }
+  .saved-card.active { border-color: var(--accent); background: rgba(232,201,122,0.06); }
+  .saved-card-info { flex: 1; min-width: 0; }
+  .saved-card-name { font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .saved-card-meta { font-family: 'DM Mono', monospace; font-size: 11px; color: var(--text-muted); margin-top: 2px; }
   .modal-overlay {
     position: fixed; inset: 0;
     background: rgba(14,15,17,0.85);
@@ -993,7 +1013,7 @@
 <!-- Upload view -->
 <div class="upload-view" id="uploadView">
 
-  <!-- Left: upload + file queue -->
+  <!-- Left: history + upload -->
   <div class="upload-main">
     <input type="file" id="fileInput" accept="audio/*,video/*,.mp3,.mp4,.wav,.m4a,.ogg,.webm,.mov" multiple style="display:none" onchange="handleFileSelect(event)">
 
@@ -1010,20 +1030,30 @@
       </div>
     </div>
 
-    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()">
+    <!-- Saved recordings -->
+    <div style="padding:12px 20px 8px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;flex-shrink:0">
+      <span class="panel-label">Saved Recordings</span>
+      <button class="file-btn" onclick="clearAllSaved()" style="font-size:11px;color:var(--text-muted)">Clear all</button>
+    </div>
+    <div id="savedList" style="overflow-y:auto;max-height:240px;padding:8px 12px;display:flex;flex-direction:column;gap:6px;flex-shrink:0;border-bottom:1px solid var(--border)">
+      <div id="savedEmpty" style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px">No saved recordings yet.</div>
+    </div>
+
+    <!-- New upload -->
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()" style="margin:16px;flex-shrink:0">
       <div class="drop-icon">🎵</div>
-      <div class="drop-title">Drop audio or video files here</div>
-      <div class="drop-sub">Tap to browse, or drag files from your device.<br>AssemblyAI will transcribe & identify each speaker.</div>
+      <div class="drop-title">Upload a new recording</div>
+      <div class="drop-sub">Tap to browse or drag a file here.</div>
       <div class="drop-formats">MP3 · MP4 · WAV · M4A · OGG · WEBM · MOV</div>
     </div>
 
-    <div style="padding: 0 24px 12px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0">
-      <span class="panel-label">File Queue</span>
+    <div style="padding: 0 20px 10px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0">
+      <span class="panel-label">Queue</span>
       <button class="file-btn primary" onclick="transcribeAll()" id="transcribeAllBtn" style="display:none">✦ Transcribe All</button>
     </div>
 
-    <div class="file-queue" id="fileQueue">
-      <div id="fileQueueEmpty" style="color:var(--text-muted);font-size:13px;text-align:center;padding:20px">No files added yet.</div>
+    <div class="file-queue" id="fileQueue" style="flex:1">
+      <div id="fileQueueEmpty" style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px">No files queued.</div>
     </div>
   </div>
 
@@ -1566,6 +1596,7 @@ renderSpeakers();
 updateSpeakerSelectBar();
 startWaveform();
 stopWaveform();
+loadSavedRecordings();
 
 // ════════════════════════════════════════
 // TAB SWITCHING
@@ -1935,11 +1966,114 @@ If you cannot identify any names with confidence, return {}`;
 }
 
 function updateFileStatus(filename, msg) {
-  // Update the progress bar label if visible — no-op if element gone
   const item = uploadQueue.find(i => i.file.name === filename && i.status === 'processing');
   if (!item) return;
   const el = document.getElementById('pb_' + item.id);
   if (el) el.style.width = msg === 'Uploading…' ? '30%' : '70%';
+}
+
+// ════════════════════════════════════════
+// SAVED RECORDINGS
+// ════════════════════════════════════════
+let savedRecordings = []; // { id, filename, date, lines }
+let activeRecordingId = null;
+
+function loadSavedRecordings() {
+  try {
+    savedRecordings = JSON.parse(localStorage.getItem('echo_recordings') || '[]');
+  } catch(e) { savedRecordings = []; }
+  renderSavedList();
+}
+
+function saveRecording(filename, lines) {
+  const id = 'rec_' + Date.now();
+  const rec = {
+    id,
+    filename,
+    date: new Date().toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }),
+    lineCount: lines.length,
+    speakerCount: new Set(lines.map(l => l.speaker)).size,
+    lines: lines.map(l => ({ speaker: l.speaker, text: l.text, ts: l.ts }))
+  };
+  savedRecordings.unshift(rec); // newest first
+  // Keep max 50 recordings
+  if (savedRecordings.length > 50) savedRecordings = savedRecordings.slice(0, 50);
+  try {
+    localStorage.setItem('echo_recordings', JSON.stringify(savedRecordings));
+  } catch(e) {
+    // If storage is full, remove oldest and retry
+    savedRecordings = savedRecordings.slice(0, 20);
+    try { localStorage.setItem('echo_recordings', JSON.stringify(savedRecordings)); } catch(e2) {}
+  }
+  renderSavedList();
+  return id;
+}
+
+function renderSavedList() {
+  const list = document.getElementById('savedList');
+  if (!list) return;
+  list.innerHTML = '';
+  if (savedRecordings.length === 0) {
+    list.innerHTML = '<div id="savedEmpty" style="color:var(--text-muted);font-size:13px;text-align:center;padding:16px">No saved recordings yet.</div>';
+    return;
+  }
+  savedRecordings.forEach(rec => {
+    const card = document.createElement('div');
+    card.className = 'saved-card' + (rec.id === activeRecordingId ? ' active' : '');
+    card.innerHTML = `
+      <div style="font-size:20px;flex-shrink:0">🎙</div>
+      <div class="saved-card-info">
+        <div class="saved-card-name">${escHtml(rec.filename)}</div>
+        <div class="saved-card-meta">${rec.date} · ${rec.lineCount} lines · ${rec.speakerCount} speakers</div>
+      </div>
+      <button class="file-btn" onclick="event.stopPropagation();deleteSaved('${rec.id}')" style="padding:4px 8px;flex-shrink:0;color:var(--text-muted)">✕</button>
+    `;
+    card.onclick = () => loadRecording(rec.id);
+    list.appendChild(card);
+  });
+}
+
+function loadRecording(id) {
+  const rec = savedRecordings.find(r => r.id === id);
+  if (!rec) return;
+  activeRecordingId = id;
+
+  // Clear current transcript view
+  uploadTranscriptLines = [];
+  const scroll = document.getElementById('uploadTranscriptScroll');
+  scroll.innerHTML = '';
+  document.getElementById('audioPlayerBar').style.display = 'none';
+  document.getElementById('uploadSummaryBox').style.display = 'none';
+
+  // Render the saved lines
+  appendUploadTranscript(rec.lines, rec.filename, true /* isSaved — no audio */);
+  renderSavedList();
+
+  // Switch to upload tab if not already there
+  switchTab('upload');
+}
+
+function deleteSaved(id) {
+  savedRecordings = savedRecordings.filter(r => r.id !== id);
+  try { localStorage.setItem('echo_recordings', JSON.stringify(savedRecordings)); } catch(e) {}
+  if (activeRecordingId === id) {
+    activeRecordingId = null;
+    uploadTranscriptLines = [];
+    document.getElementById('uploadTranscriptScroll').innerHTML =
+      '<div id="uploadTranscriptEmpty" style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px 20px;line-height:1.8">Select a recording from the list, or upload a new one.</div>';
+  }
+  renderSavedList();
+}
+
+function clearAllSaved() {
+  if (!confirm('Delete all saved recordings?')) return;
+  savedRecordings = [];
+  activeRecordingId = null;
+  try { localStorage.removeItem('echo_recordings'); } catch(e) {}
+  uploadTranscriptLines = [];
+  document.getElementById('uploadTranscriptScroll').innerHTML =
+    '<div id="uploadTranscriptEmpty" style="color:var(--text-muted);font-size:13px;text-align:center;padding:40px 20px;line-height:1.8">No saved recordings yet.</div>';
+  renderSavedList();
 }
 
 function promptSpeakerNames(speakerLabels, filename) {
@@ -1985,19 +2119,25 @@ document.getElementById('speakerModal').addEventListener('click', function(e) {
   if (e.target === this) closeModal(false);
 });
 
-function appendUploadTranscript(lines, filename) {
+function appendUploadTranscript(lines, filename, isSaved) {
   const scroll = document.getElementById('uploadTranscriptScroll');
   document.getElementById('uploadTranscriptEmpty')?.remove();
 
-  // Load audio player with this file
-  const item = uploadQueue.find(i => i.file.name === filename);
-  if (item?.file) {
-    const player = document.getElementById('audioPlayer');
-    const bar = document.getElementById('audioPlayerBar');
-    if (player.src) URL.revokeObjectURL(player.src);
-    player.src = URL.createObjectURL(item.file);
-    document.getElementById('audioFileName').textContent = filename;
-    bar.style.display = 'block';
+  // Load audio player (only for freshly uploaded files, not saved ones)
+  if (!isSaved) {
+    const item = uploadQueue.find(i => i.file.name === filename);
+    if (item?.file) {
+      const player = document.getElementById('audioPlayer');
+      const bar = document.getElementById('audioPlayerBar');
+      if (player.src) URL.revokeObjectURL(player.src);
+      player.src = URL.createObjectURL(item.file);
+      document.getElementById('audioFileName').textContent = filename;
+      bar.style.display = 'block';
+    }
+    // Save to history
+    const id = saveRecording(filename, lines);
+    activeRecordingId = id;
+    renderSavedList();
   }
 
   // File divider
@@ -2323,6 +2463,16 @@ function applyRename() {
   });
 
   cancelRename();
+
+  // Auto-save updated transcript
+  if (activeRecordingId) {
+    const rec = savedRecordings.find(r => r.id === activeRecordingId);
+    if (rec) {
+      rec.lines = uploadTranscriptLines.map(l => ({ speaker: l.speaker, text: l.text, ts: l.ts }));
+      rec.speakerCount = new Set(uploadTranscriptLines.map(l => l.speaker)).size;
+      try { localStorage.setItem('echo_recordings', JSON.stringify(savedRecordings)); } catch(e) {}
+    }
+  }
 }
 
 function cancelRename() {
