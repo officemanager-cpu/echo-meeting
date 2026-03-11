@@ -1848,7 +1848,90 @@ async function transcribeWithAssemblyAI(file, apiKey) {
 
   if (lines.length === 0) throw new Error('Transcript came back empty — the audio may be silent or unsupported');
 
-  return lines;
+  // Step 5: Detect spoken name announcements (e.g. "James alcoholic", "Sarah speaking")
+  const nameMap = await detectSpokenNames(lines);
+
+  // Apply names and strip the spoken announcement from the text
+  return lines.map(l => {
+    const detectedName = nameMap[l.speaker];
+    if (!detectedName) return l;
+    // Remove the spoken name announcement from the start of the text
+    const cleaned = stripNameAnnouncement(l.text, detectedName);
+    return { ...l, speaker: detectedName, text: cleaned };
+  });
+}
+
+// Strip "James alcoholic" / "Sarah speaking" / "Mike here" from start of text
+function stripNameAnnouncement(text, name) {
+  // Match name (possibly followed by 1-2 words like a role/filler) at start
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const pattern = new RegExp(`^${escaped}\\s*\\S*\\s*`, 'i');
+  const stripped = text.replace(pattern, '').trim();
+  // Only strip if something meaningful remains
+  return stripped.length > 4 ? stripped : text;
+}
+}
+
+// Use Claude to find spoken name announcements in the transcript
+async function detectSpokenNames(lines) {
+  // Build a compact sample — first utterance per speaker label
+  const seenSpeakers = {};
+  const samples = [];
+  lines.forEach(l => {
+    if (!seenSpeakers[l.speaker]) {
+      seenSpeakers[l.speaker] = true;
+      samples.push({ speaker: l.speaker, text: l.text });
+    }
+  });
+
+  // Also grab second and third utterance per speaker for more context
+  const seenCount = {};
+  lines.forEach(l => {
+    seenCount[l.speaker] = (seenCount[l.speaker] || 0) + 1;
+    if (seenCount[l.speaker] <= 3 && !samples.find(s => s.speaker === l.speaker && s.text === l.text)) {
+      samples.push({ speaker: l.speaker, text: l.text });
+    }
+  });
+
+  const sampleText = samples.map(s => `${s.speaker}: "${s.text}"`).join('\n');
+
+  const prompt = `You are analyzing a meeting transcript where participants announce their name at the start of their turn, often in the format "Name [role/word]" e.g. "James alcoholic", "Sarah speaking", "Mike here", "Dr Johnson".
+
+Look at these transcript lines (one per speaker) and identify if a speaker is announcing their own name at the very start of what they say.
+
+${sampleText}
+
+Return ONLY a JSON object mapping speaker labels to real names for any you can confidently identify. If a speaker does NOT announce their name, do NOT include them. Example: {"Speaker A": "James", "Speaker C": "Sarah"}
+
+If you cannot identify any names with confidence, return {}`;
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 300,
+        messages: [{ role: 'user', content: prompt }]
+      })
+    });
+    const data = await res.json();
+    const raw = data.content?.map(c => c.text || '').join('') || '{}';
+    const parsed = JSON.parse(raw.replace(/```json|```/g, '').trim());
+
+    // Save any detected names to voice memory
+    Object.entries(parsed).forEach(([label, name]) => {
+      if (name && /^Speaker [A-Z]$/.test(label)) {
+        voiceMemory[label] = name;
+      }
+    });
+    saveVoiceMemory();
+
+    return parsed;
+  } catch(e) {
+    console.warn('Name detection failed, skipping:', e);
+    return {};
+  }
 }
 
 function updateFileStatus(filename, msg) {
