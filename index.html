@@ -1040,11 +1040,12 @@
     </div>
 
     <!-- New upload -->
-    <div class="drop-zone" id="dropZone" onclick="document.getElementById('fileInput').click()" style="margin:16px;flex-shrink:0">
+    <div class="drop-zone" id="dropZone" style="margin:16px;flex-shrink:0">
       <div class="drop-icon">🎵</div>
       <div class="drop-title">Upload a new recording</div>
-      <div class="drop-sub">Tap to browse or drag a file here.</div>
+      <div class="drop-sub">Tap the button below or drag a file here.</div>
       <div class="drop-formats">MP3 · MP4 · WAV · M4A · OGG · WEBM · MOV</div>
+      <button onclick="document.getElementById('fileInput').click()" style="margin-top:8px;background:var(--accent2);color:#0e0f11;border:none;border-radius:8px;padding:10px 24px;font-family:'Lato',sans-serif;font-weight:700;font-size:14px;cursor:pointer;letter-spacing:0.05em">Browse Files</button>
     </div>
 
     <div style="padding: 0 20px 10px; display:flex; align-items:center; justify-content:space-between; flex-shrink:0">
