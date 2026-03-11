@@ -1729,6 +1729,7 @@ document.getElementById('openaiKey').addEventListener('input', function() {
 })();
 
 const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('click', () => showUploadDebug('Zone tapped — file picker should open…'));
 dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
 dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
 dropZone.addEventListener('drop', e => {
@@ -1742,17 +1743,37 @@ dropZone.addEventListener('drop', e => {
 });
 
 function handleFileSelect(event) {
-  Array.from(event.target.files).forEach(addFileToQueue);
+  const files = Array.from(event.target.files);
+  console.log('handleFileSelect fired, files:', files.length, files.map(f => f.name));
+  if (files.length === 0) {
+    showUploadDebug('File picker opened but no files were returned. Try again.');
+    return;
+  }
+  files.forEach(addFileToQueue);
   event.target.value = '';
 }
 
 function addFileToQueue(file) {
+  console.log('addFileToQueue:', file.name, file.type, file.size);
+  showUploadDebug(`Adding: ${file.name} (${file.type || 'no type'}, ${(file.size/1024/1024).toFixed(1)}MB)`);
   const id = 'file_' + Date.now() + '_' + Math.random().toString(36).slice(2);
   const item = { id, file, status: 'pending' };
   uploadQueue.push(item);
   document.getElementById('fileQueueEmpty')?.remove();
   document.getElementById('transcribeAllBtn').style.display = 'flex';
   renderFileItem(item);
+}
+
+function showUploadDebug(msg) {
+  let dbg = document.getElementById('uploadDebug');
+  if (!dbg) {
+    dbg = document.createElement('div');
+    dbg.id = 'uploadDebug';
+    dbg.style.cssText = 'margin:8px 16px;padding:10px 14px;background:rgba(232,201,122,0.08);border:1px solid rgba(232,201,122,0.25);border-radius:8px;font-family:DM Mono,monospace;font-size:11px;color:var(--accent);line-height:1.6;flex-shrink:0';
+    const queue = document.getElementById('fileQueue');
+    queue.parentNode.insertBefore(dbg, queue);
+  }
+  dbg.innerHTML += msg + '<br>';
 }
 
 function renderFileItem(item) {
